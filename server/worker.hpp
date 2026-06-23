@@ -17,6 +17,20 @@ struct LoraModelEntry {
     float lora_scale = 0.0f;
 };
 
+struct WorkerTiming {
+    std::optional<double> text_encoder_ms;
+    std::optional<double> denoising_ms;
+    std::optional<double> denoising_step_ms;
+    std::optional<double> vae_decoder_ms;
+    std::optional<double> e2e_runtime_ms;
+    std::optional<double> server_elapsed_ms;
+};
+
+struct WorkerResult {
+    std::string image_path;
+    WorkerTiming timing;
+};
+
 // List configured LoRA catalog entries as OpenAI-compatible model IDs.
 std::vector<LoraModelEntry> list_lora_model_entries();
 
@@ -32,8 +46,8 @@ void ensure_model_weights_ready(const std::string& model_id);
 // Convert a model id into the NPU file directory and worker executable path.
 WorkerPaths resolve_worker_paths(const std::string& raw_target);
 
-// Run the external model executable and return the generated image path.
-std::string run_worker(const GenParams& params);
+// Run the external model executable and return the generated image path plus timing metadata.
+WorkerResult run_worker(const GenParams& params);
 
 // Remove generated or uploaded images after a request when configured to do so.
 void cleanup_generated_image(const std::string& image_path, bool keep_on_disk);

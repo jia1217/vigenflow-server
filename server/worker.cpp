@@ -10,6 +10,7 @@
 #include <boost/process.hpp>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -251,6 +252,166 @@ std::string url_decode(std::string value) {
         out.push_back(value[i] == '+' ? ' ' : value[i]);
     }
     return out;
+}
+
+
+std::optional<double> parse_double_full(std::string value) {
+    value = trim_copy(std::move(value));
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end == value.c_str()) {
+        return std::nullopt;
+    }
+    while (*end != '\0') {
+        if (!std::isspace(static_cast<unsigned char>(*end))) {
+            return std::nullopt;
+        }
+        ++end;
+    }
+    return parsed;
+}
+
+std::optional<double> parse_elapsed_clock_ms(std::string value) {
+    value = trim_copy(std::move(value));
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<double> parts;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t colon = value.find(':', start);
+        const std::size_t end = colon == std::string::npos ? value.size() : colon;
+        const auto part = parse_double_full(value.substr(start, end - start));
+        if (!part) {
+            return std::nullopt;
+        }
+        parts.push_back(*part);
+        if (colon == std::string::npos) {
+            break;
+        }
+        start = colon + 1;
+    }
+
+    double seconds = 0.0;
+    for (double part : parts) {
+        seconds = seconds * 60.0 + part;
+    }
+    return seconds * 1000.0;
+}
+
+std::optional<int> parse_progress_completed(const std::string& record, std::size_t bracket_pos) {
+    const std::size_t bar_pos = record.rfind('|', bracket_pos);
+    if (bar_pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const std::size_t slash_pos = record.find('/', bar_pos + 1);
+    if (slash_pos == std::string::npos || slash_pos > bracket_pos) {
+        return std::nullopt;
+    }
+
+    std::string value = trim_copy(record.substr(bar_pos + 1, slash_pos - bar_pos - 1));
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    char* end = nullptr;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || parsed <= 0) {
+        return std::nullopt;
+    }
+    return static_cast<int>(parsed);
+}
+
+std::optional<double> parse_progress_seconds_per_it(
+    const std::string& record,
+    std::size_t bracket_pos) {
+    const std::size_t comma_pos = record.find(',', bracket_pos);
+    if (comma_pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const std::size_t unit_pos = record.find("s/it", comma_pos);
+    if (unit_pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    return parse_double_full(record.substr(comma_pos + 1, unit_pos - comma_pos - 1));
+}
+
+std::optional<double> parse_progress_clock_elapsed_ms(
+    const std::string& record,
+    std::size_t bracket_pos) {
+    const std::size_t less_pos = record.find('<', bracket_pos);
+    if (less_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    return parse_elapsed_clock_ms(record.substr(bracket_pos + 1, less_pos - bracket_pos - 1));
+}
+
+std::optional<double> parse_progress_elapsed_ms(
+    const std::string& record,
+    const std::string& stage_name) {
+    const std::string prefix = stage_name + ":";
+    const std::size_t stage_pos = record.rfind(prefix);
+    if (stage_pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const std::size_t bracket_pos = record.find('[', stage_pos);
+    if (bracket_pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const auto completed = parse_progress_completed(record, bracket_pos);
+    const auto seconds_per_it = parse_progress_seconds_per_it(record, bracket_pos);
+    if (completed && seconds_per_it) {
+        return static_cast<double>(*completed) * *seconds_per_it * 1000.0;
+    }
+
+    return parse_progress_clock_elapsed_ms(record, bracket_pos);
+}
+
+std::optional<double> parse_labeled_ms(const std::string& record, const std::string& label) {
+    const std::size_t label_pos = record.find(label);
+    if (label_pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const std::size_t start = label_pos + label.size();
+    const std::size_t unit_pos = record.find("ms", start);
+    const std::size_t end = unit_pos == std::string::npos ? record.size() : unit_pos;
+    return parse_double_full(record.substr(start, end - start));
+}
+
+void parse_worker_output_record(const std::string& record, WorkerTiming& timing) {
+    if (const auto ms = parse_progress_elapsed_ms(record, "Text Encoder")) {
+        timing.text_encoder_ms = *ms;
+    }
+    if (const std::size_t stage_pos = record.rfind("Denoising:"); stage_pos != std::string::npos) {
+        const std::size_t bracket_pos = record.find('[', stage_pos);
+        if (bracket_pos != std::string::npos) {
+            if (const auto elapsed_ms = parse_progress_clock_elapsed_ms(record, bracket_pos)) {
+                timing.denoising_ms = *elapsed_ms;
+            } else if (const auto ms = parse_progress_elapsed_ms(record, "Denoising")) {
+                timing.denoising_ms = *ms;
+            }
+            if (const auto seconds_per_it = parse_progress_seconds_per_it(record, bracket_pos)) {
+                timing.denoising_step_ms = *seconds_per_it * 1000.0;
+            }
+        }
+    }
+    if (const auto ms = parse_progress_elapsed_ms(record, "VAE Decoder")) {
+        timing.vae_decoder_ms = *ms;
+    }
+    if (const auto ms = parse_labeled_ms(record, "E2E runtime:")) {
+        timing.e2e_runtime_ms = *ms;
+    }
 }
 
 std::optional<std::string> z_image_lora_name_from_model_id(const std::string& model_id) {
@@ -1508,7 +1669,7 @@ WorkerPaths resolve_worker_paths(const std::string& raw_target) {
     return paths;
 }
 
-std::string run_worker(const GenParams& p) {
+WorkerResult run_worker(const GenParams& p) {
     ensure_output_dir();
 
     GenParams params = p;
@@ -1654,14 +1815,40 @@ std::string run_worker(const GenParams& p) {
         }
     }
 
+    WorkerTiming timing;
     const auto start_time = std::chrono::steady_clock::now();
 
-    bp::child child(paths.exe, bp::args(exec_args), bp::start_dir = config::workdir);
+    bp::ipstream child_output;
+    bp::child child(
+        paths.exe,
+        bp::args(exec_args),
+        bp::start_dir = config::workdir,
+        bp::std_out > child_output);
+
+    std::string output_record;
+    char output_char = '\0';
+    while (child_output.get(output_char)) {
+        std::cout.put(output_char);
+        if (output_char == '\r' || output_char == '\n') {
+            if (!output_record.empty()) {
+                parse_worker_output_record(output_record, timing);
+                output_record.clear();
+            }
+            std::cout.flush();
+        } else {
+            output_record.push_back(output_char);
+        }
+    }
+    if (!output_record.empty()) {
+        parse_worker_output_record(output_record, timing);
+    }
+
     child.wait();
 
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - start_time)
                                 .count();
+    timing.server_elapsed_ms = static_cast<double>(elapsed_ms);
 
     if (child.exit_code() != 0) {
         std::cerr << "[ERROR] Worker failed with exit code " << child.exit_code() << "\n";
@@ -1676,7 +1863,7 @@ std::string run_worker(const GenParams& p) {
     std::cout << "[INFO] Generation completed in " << elapsed_ms << " ms\n";
     std::cout << "[INFO] Waiting for next request\n";
 
-    return fullpath;
+    return WorkerResult{fullpath, timing};
 }
 
 void cleanup_generated_image(const std::string& image_path, bool keep_on_disk) {

@@ -121,6 +121,20 @@ fs::path default_cache_dir(const fs::path& output_root) {
     return output_root.parent_path() / ".z_image_bf16_hf_cache";
 }
 
+std::string hf_endpoint() {
+    std::string endpoint;
+    if (const char* env = std::getenv("HF_ENDPOINT")) {
+        endpoint = trim_copy(env);
+    }
+    if (endpoint.empty()) {
+        endpoint = "https://huggingface.co";
+    }
+    while (!endpoint.empty() && endpoint.back() == '/') {
+        endpoint.pop_back();
+    }
+    return endpoint;
+}
+
 fs::path download_cache_file(
     const fs::path& cache_dir,
     const std::string& repo_id,
@@ -133,12 +147,12 @@ std::string hf_resolve_url(
     const std::string& repo_id,
     const std::string& filename,
     const std::string& revision) {
-    return "https://huggingface.co/" + url_encode(repo_id, true) + "/resolve/" +
+    return hf_endpoint() + "/" + url_encode(repo_id, true) + "/resolve/" +
            url_encode(revision, false) + "/" + url_encode(filename, true);
 }
 
 std::string hf_api_url(const std::string& repo_id, const std::string& revision) {
-    return "https://huggingface.co/api/models/" + url_encode(repo_id, true) +
+    return hf_endpoint() + "/api/models/" + url_encode(repo_id, true) +
            "/revision/" + url_encode(revision, false);
 }
 
@@ -165,6 +179,9 @@ void curl_download_to_file(
     const int rc = std::system(command.c_str());
     if (rc != 0) {
         fs::remove(tmp_path, ec);
+        std::cerr << "[ERROR] Download failed from " << url << "\n"
+                  << "[ERROR] If this device cannot resolve cas-bridge.xethub.hf.co, "
+                  << "set HF_ENDPOINT to a reachable Hugging Face mirror and retry.\n";
         throw std::runtime_error("curl failed while downloading: " + url);
     }
     fs::rename(tmp_path, output_path);
@@ -768,7 +785,8 @@ void prepare_z_image_bf16_weights_cpp(const ZImageBf16ExportOptions& options) {
     fs::create_directories(output_root);
 
     std::cout << "[INFO] Preparing Z-Image BF16 weights from " << repo_id
-              << " (" << revision << ") into " << output_root << "\n";
+              << " (" << revision << ") into " << output_root << "\n"
+              << "[INFO] Hugging Face endpoint: " << hf_endpoint() << "\n";
 
     const auto files = repo_files(repo_id, revision, cache_dir, token, options.force);
     const auto transformer_files = component_safetensor_files(
