@@ -1,0 +1,151 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-ubuntu:
+    name: Ubuntu build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libboost-all-dev nlohmann-json3-dev
+
+      - name: Build
+        working-directory: server_unified
+        run: bash build_ubuntu.sh
+
+      - name: Smoke test
+        run: ./server_unified/vgf-serve --help
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist/ubuntu
+          cp server_unified/vgf-serve dist/ubuntu/
+          cp server_unified/*.jsonc dist/ubuntu/
+          cp server_unified/README.md dist/ubuntu/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vgf-serve-ubuntu-x64
+          path: dist/ubuntu
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows build
+    runs-on: windows-latest
+
+    env:
+      VCPKG_TRIPLET: x64-windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            if (Test-Path "C:\vcpkg\vcpkg.exe") {
+              $vcpkgRoot = "C:\vcpkg"
+            } else {
+              $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+              git clone https://github.com/microsoft/vcpkg "$vcpkgRoot"
+              & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+            }
+          }
+
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_TRIPLET=$env:VCPKG_TRIPLET" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install `
+            boost-asio:$env:VCPKG_TRIPLET `
+            boost-beast:$env:VCPKG_TRIPLET `
+            boost-filesystem:$env:VCPKG_TRIPLET `
+            boost-process:$env:VCPKG_TRIPLET `
+            boost-system:$env:VCPKG_TRIPLET `
+            nlohmann-json:$env:VCPKG_TRIPLET
+
+      - name: Build
+        working-directory: server_unified
+        shell: cmd
+        run: build_windows.bat
+
+      - name: Smoke test
+        shell: cmd
+        run: server_unified\exe_server\vgf-serve.exe --help
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist\windows -Force | Out-Null
+          Copy-Item server_unified\exe_server\vgf-serve.exe dist\windows\
+          Copy-Item server_unified\exe_server\*.dll dist\windows\
+          Copy-Item server_unified\*.jsonc dist\windows\
+          Copy-Item server_unified\README.md dist\windows\
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vgf-serve-windows-x64
+          path: dist/windows
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs:
+      - build-ubuntu
+      - build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package release files
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          mkdir -p release
+          chmod +x artifacts/vgf-serve-ubuntu-x64/vgf-serve || true
+          tar -czf "release/vgf-serve-${tag}-ubuntu-x64.tar.gz" -C artifacts/vgf-serve-ubuntu-x64 .
+          cd artifacts/vgf-serve-windows-x64
+          zip -r "../../release/vgf-serve-${tag}-windows-x64.zip" .
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber
+          else
+            gh release create "$tag" release/* --generate-notes --verify-tag
+          fi

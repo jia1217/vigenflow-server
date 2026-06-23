@@ -1,0 +1,8 @@
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.bat text eol=crlf
+*.cpp text
+*.hpp text
+*.jsonc text
+*.md text

@@ -1,0 +1,10 @@
+# Local build outputs
+server_unified/vgf-serve
+server_unified/exe_server/
+server_ubuntu/vgf-serve
+server_windows/exe_server/
+
+# Temporary packaging directories
+dist/
+artifacts/
+release/

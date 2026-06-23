@@ -25,6 +25,7 @@ SOURCES=(
   -I. -I./include \
   -pthread \
   -lboost_system \
+  -lboost_filesystem \
   ${LDFLAGS:-} \
   -o "$OUT"
 

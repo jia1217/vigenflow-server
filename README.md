@@ -43,3 +43,26 @@ bash build_vgf_serve.sh
 ```
 
 The dispatcher calls `build_windows.sh` on Windows/Git Bash and `build_ubuntu.sh` on Ubuntu.
+
+## CI/CD
+
+GitHub Actions is configured in `.github/workflows/ci-cd.yml`.
+
+It runs on every push, pull request, and manual workflow dispatch:
+
+- Builds `server_unified` on Ubuntu with `build_ubuntu.sh`
+- Builds `server_unified` on Windows with `build_windows.bat`
+- Runs `vgf-serve --help` as a smoke test
+- Uploads `vgf-serve-ubuntu-x64` and `vgf-serve-windows-x64` build artifacts
+
+To create a GitHub Release with packaged binaries, push a tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The release job creates:
+
+- `vgf-serve-v1.0.0-ubuntu-x64.tar.gz`
+- `vgf-serve-v1.0.0-windows-x64.zip`

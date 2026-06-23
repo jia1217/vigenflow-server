@@ -56,6 +56,8 @@ exit /b 1
 
 :have_vcpkg_include
 if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib\%BOOST_FILESYSTEM_LIB%" goto have_boost_filesystem
+for %%F in ("%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib\boost_filesystem-*.lib") do set "BOOST_FILESYSTEM_LIB=%%~nxF"
+if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib\%BOOST_FILESYSTEM_LIB%" goto have_boost_filesystem
 echo Boost filesystem library not found: "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib\%BOOST_FILESYSTEM_LIB%"
 echo Set BOOST_FILESYSTEM_LIB before running this script if your Boost version is different.
 exit /b 1
