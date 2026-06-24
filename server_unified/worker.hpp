@@ -18,6 +18,7 @@ struct LoraModelEntry {
 };
 
 struct GenerationTimingInfo {
+    std::optional<double> vae_encoder_seconds;
     std::optional<double> text_encoder_seconds;
     std::optional<double> denoising_seconds_per_step;
     std::optional<double> denoising_total_seconds;

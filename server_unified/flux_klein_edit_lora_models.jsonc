@@ -15,6 +15,14 @@
       "enabled": true,
       "lora_rank": 16,
       "lora_scale": 1.0
+    },
+    {
+      "id": "zoom_in",
+      "source": "fal/flux-2-klein-4B-zoom-lora",
+      "file": "flux-red-zoom-lora.safetensors",
+      "enabled": true,
+      "lora_rank": 16,
+      "lora_scale": 1.0
     }
     
   ]

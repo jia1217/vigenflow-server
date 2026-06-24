@@ -4,12 +4,15 @@
 #include "server_config.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <regex>
+#include <set>
 #include <stdexcept>
+#include <utility>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -66,6 +69,15 @@ void apply_size_from_body_fallback(GenParams& params, const std::string& body) {
 
 bool parse_bool_field(const std::string& value) {
     return value == "true" || value == "1" || value == "yes" || value == "on";
+}
+
+std::pair<std::size_t, std::uint64_t> image_part_signature(const std::string& data) {
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const unsigned char ch : data) {
+        hash ^= ch;
+        hash *= 1099511628211ull;
+    }
+    return {data.size(), hash};
 }
 
 void apply_lora_json_options(GenParams& params, const json& j) {
@@ -212,6 +224,7 @@ GenParams parse_multipart_request(const http::request<http::string_body>& req) {
 
     const std::string& body = req.body();
     size_t start_pos = 0;
+    std::set<std::pair<std::size_t, std::uint64_t>> saved_image_parts;
 
     while ((start_pos = body.find(boundary, start_pos)) != std::string::npos) {
         start_pos += boundary.length();
@@ -273,6 +286,21 @@ GenParams parse_multipart_request(const http::request<http::string_body>& req) {
             } else if (name == "force_gguf_download") {
                 params.force_gguf_download = parse_bool_field(part_data);
             } else if (name == "image[]" || name == "image") {
+                if (!params.input_images.empty()) {
+                    std::cout << "[INFO] Ignoring extra uploaded image part: "
+                              << name << "\n";
+                    start_pos = next_boundary;
+                    continue;
+                }
+
+                const auto signature = image_part_signature(part_data);
+                if (!saved_image_parts.insert(signature).second) {
+                    std::cout << "[INFO] Ignoring duplicate uploaded image part: "
+                              << name << "\n";
+                    start_pos = next_boundary;
+                    continue;
+                }
+
                 const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::system_clock::now().time_since_epoch())
                                     .count();

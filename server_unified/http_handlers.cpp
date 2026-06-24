@@ -36,10 +36,14 @@ std::string g_last_openwebui_model;
 std::string g_automatic1111_model;
 json g_last_generation_usage = json::object();
 std::uint64_t g_openwebui_model_generation = 0;
+std::chrono::steady_clock::time_point g_last_openwebui_model_at{};
+
+constexpr auto kRecentOpenWebUIModelWindow = std::chrono::seconds(20);
 
 struct RememberedOpenWebUIModel {
     std::optional<std::string> model;
     std::uint64_t generation = 0;
+    std::chrono::steady_clock::time_point remembered_at{};
 };
 
 http::response<http::string_body> make_json_response(
@@ -81,22 +85,25 @@ nlohmann::ordered_json build_openwebui_generation_info(
     info["2_Image_W"] = params.W;
     info["3_Denoising_steps"] = timing.denoising_steps.value_or(params.steps);
 
+    if (timing.vae_encoder_seconds) {
+        info["4_Vae_encoder"] = format_seconds(*timing.vae_encoder_seconds);
+    }
     if (timing.text_encoder_seconds) {
-        info["4_Text_encoder"] = format_seconds(*timing.text_encoder_seconds);
+        info["5_Text_encoder"] = format_seconds(*timing.text_encoder_seconds);
     }
     if (timing.denoising_seconds_per_step) {
         const double total_seconds = timing.denoising_total_seconds.value_or(
             *timing.denoising_seconds_per_step *
             static_cast<double>(timing.denoising_steps.value_or(params.steps)));
-        info["5_Denoising"] =
+        info["6_Denoising"] =
             format_seconds(*timing.denoising_seconds_per_step) + "/step, " +
             format_whole_seconds(total_seconds);
     }
     if (timing.vae_decoder_seconds) {
-        info["6_Vae_decoder"] = format_seconds(*timing.vae_decoder_seconds);
+        info["7_Vae_decoder"] = format_seconds(*timing.vae_decoder_seconds);
     }
     if (timing.e2e_runtime_seconds) {
-        info["7_E2E_runtime"] = format_seconds(*timing.e2e_runtime_seconds);
+        info["8_E2E_runtime"] = format_seconds(*timing.e2e_runtime_seconds);
     }
 
     return info;
@@ -356,7 +363,9 @@ bool should_apply_remembered_model(
     const std::string& requested_model,
     const std::string& remembered_model) {
     if (is_local_model_alias(requested_model)) {
-        return !is_local_model_alias(remembered_model);
+        return !is_local_model_alias(remembered_model) &&
+               normalize_model_target(config::model_id) ==
+                   normalize_model_target(remembered_model);
     }
     if (canonical_lora_model_id(requested_model)) {
         return false;
@@ -480,14 +489,22 @@ void remember_openwebui_model(const std::string& body) {
     }
     g_last_openwebui_model = selected_model;
     ++g_openwebui_model_generation;
+    g_last_openwebui_model_at = std::chrono::steady_clock::now();
 }
 
 RememberedOpenWebUIModel remembered_openwebui_model() {
     std::lock_guard<std::mutex> lock(g_openwebui_model_mutex);
     if (g_last_openwebui_model.empty()) {
-        return {std::nullopt, g_openwebui_model_generation};
+        return {std::nullopt, g_openwebui_model_generation, {}};
     }
-    return {g_last_openwebui_model, g_openwebui_model_generation};
+    return {g_last_openwebui_model, g_openwebui_model_generation, g_last_openwebui_model_at};
+}
+
+bool is_recent_openwebui_model(const RememberedOpenWebUIModel& remembered_model) {
+    return remembered_model.model &&
+           remembered_model.remembered_at != std::chrono::steady_clock::time_point{} &&
+           std::chrono::steady_clock::now() - remembered_model.remembered_at <=
+               kRecentOpenWebUIModelWindow;
 }
 
 std::optional<RememberedOpenWebUIModel> wait_for_openwebui_model_update(
@@ -523,30 +540,55 @@ void apply_openwebui_image_model_alias(GenParams& params) {
             }
             g_last_openwebui_model = *canonical_model;
             ++g_openwebui_model_generation;
+            g_last_openwebui_model_at = std::chrono::steady_clock::now();
         }
         return;
     }
 
+    const bool requested_local_model_alias = is_local_model_alias(params.model);
     RememberedOpenWebUIModel remembered_model = remembered_openwebui_model();
-    if (is_local_model_alias(params.model) && remembered_model.model) {
-        std::cout << "[INFO] OpenWebUI sent image model " << params.model
-                  << "; using remembered OpenWebUI model "
-                  << *remembered_model.model << "\n";
-        params.model = *remembered_model.model;
-        return;
-    }
+    if (requested_local_model_alias) {
+        if (is_recent_openwebui_model(remembered_model) &&
+            should_apply_remembered_model(params.model, *remembered_model.model)) {
+            std::cout << "[INFO] OpenWebUI sent image model " << params.model
+                      << "; using recent OpenWebUI model selected before image edit "
+                      << *remembered_model.model << "\n";
+            params.model = *remembered_model.model;
+            return;
+        }
 
-    if (is_generic_lora_model(params.model)) {
         if (const auto fresh_model =
                 wait_for_openwebui_model_update(params.model, remembered_model.generation)) {
             remembered_model = *fresh_model;
             if (remembered_model.model &&
                 should_apply_remembered_model(params.model, *remembered_model.model)) {
                 std::cout << "[INFO] OpenWebUI sent image model " << params.model
-                          << "; using fresh LoRA model " << *remembered_model.model << "\n";
+                          << "; using fresh OpenWebUI model "
+                          << *remembered_model.model << "\n";
                 params.model = *remembered_model.model;
+                return;
             }
-            return;
+        }
+
+        std::cout << "[INFO] OpenWebUI sent image model " << params.model
+                  << "; no fresh OpenWebUI model update arrived, using configured model "
+                  << config::model_id << "\n";
+        params.model = config::model_id;
+    }
+
+    if (is_generic_lora_model(params.model)) {
+        if (!requested_local_model_alias) {
+            if (const auto fresh_model =
+                    wait_for_openwebui_model_update(params.model, remembered_model.generation)) {
+                remembered_model = *fresh_model;
+                if (remembered_model.model &&
+                    should_apply_remembered_model(params.model, *remembered_model.model)) {
+                    std::cout << "[INFO] OpenWebUI sent image model " << params.model
+                              << "; using fresh LoRA model " << *remembered_model.model << "\n";
+                    params.model = *remembered_model.model;
+                }
+                return;
+            }
         }
         if (const auto prompt_model = prompt_matched_lora_model_id(params.model, params.prompt)) {
             std::cout << "[INFO] OpenWebUI sent image model " << params.model
@@ -554,7 +596,8 @@ void apply_openwebui_image_model_alias(GenParams& params) {
             params.model = *prompt_model;
             return;
         }
-        if (remembered_model.model &&
+        if (!requested_local_model_alias &&
+            remembered_model.model &&
             should_apply_remembered_model(params.model, *remembered_model.model)) {
             std::cout << "[INFO] OpenWebUI sent generic image model " << params.model
                       << "; using remembered LoRA model "

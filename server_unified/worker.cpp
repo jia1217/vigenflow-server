@@ -1512,8 +1512,10 @@ bool has_direct_lora_options(const GenParams& params) {
 std::optional<LoraModelEntry> default_lora_entry_for_base_model_id(
     const std::string& model_id) {
     const std::string normalized = trim_copy(url_decode(model_id));
-    if (!is_base_z_image_lora_model_id(normalized) &&
-        !is_base_flux_klein_lora_model_id(normalized)) {
+    if (is_base_flux_klein_lora_model_id(normalized)) {
+        return std::nullopt;
+    }
+    if (!is_base_z_image_lora_model_id(normalized)) {
         return std::nullopt;
     }
 
@@ -1731,6 +1733,9 @@ std::optional<double> parse_e2e_runtime_seconds(const std::string& output) {
 GenerationTimingInfo parse_generation_timing_info(const std::string& output) {
     GenerationTimingInfo timing;
 
+    if (const auto vae_encoder_timing = parse_progress_timing(output, "VAE Encoder")) {
+        timing.vae_encoder_seconds = vae_encoder_timing->seconds_per_step;
+    }
     if (const auto text_timing = parse_progress_timing(output, "Text Encoder")) {
         timing.text_encoder_seconds = text_timing->seconds_per_step;
     }
@@ -1745,10 +1750,12 @@ GenerationTimingInfo parse_generation_timing_info(const std::string& output) {
 
     timing.e2e_runtime_seconds = parse_e2e_runtime_seconds(output);
     if (!timing.e2e_runtime_seconds &&
+        timing.vae_encoder_seconds &&
         timing.text_encoder_seconds &&
         timing.denoising_total_seconds &&
         timing.vae_decoder_seconds) {
         timing.e2e_runtime_seconds =
+            *timing.vae_encoder_seconds +
             *timing.text_encoder_seconds +
             *timing.denoising_total_seconds +
             *timing.vae_decoder_seconds;
