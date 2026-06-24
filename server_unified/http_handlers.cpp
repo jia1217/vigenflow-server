@@ -363,9 +363,7 @@ bool should_apply_remembered_model(
     const std::string& requested_model,
     const std::string& remembered_model) {
     if (is_local_model_alias(requested_model)) {
-        return !is_local_model_alias(remembered_model) &&
-               normalize_model_target(config::model_id) ==
-                   normalize_model_target(remembered_model);
+        return !is_local_model_alias(remembered_model);
     }
     if (canonical_lora_model_id(requested_model)) {
         return false;

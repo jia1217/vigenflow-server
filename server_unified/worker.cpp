@@ -2084,7 +2084,12 @@ WorkerResult run_worker(const GenParams& p) {
     std::cout << "[INFO] Generation completed in " << elapsed_ms << " ms\n";
     std::cout << "[INFO] Waiting for next request\n";
 
-    return {fullpath, parse_generation_timing_info(worker_output)};
+    GenerationTimingInfo timing = parse_generation_timing_info(worker_output);
+    if (!timing.e2e_runtime_seconds) {
+        timing.e2e_runtime_seconds = static_cast<double>(elapsed_ms) / 1000.0;
+    }
+
+    return {fullpath, timing};
 }
 
 void cleanup_generated_image(const std::string& image_path, bool keep_on_disk) {
