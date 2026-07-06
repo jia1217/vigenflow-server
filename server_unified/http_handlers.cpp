@@ -35,7 +35,7 @@ std::mutex g_last_generation_info_mutex;
 std::string g_last_openwebui_model;
 std::string g_last_openwebui_edit_model;
 std::string g_automatic1111_model;
-json g_last_generation_usage = json::object();
+json g_last_generation_info = json::object();
 std::uint64_t g_openwebui_model_generation = 0;
 std::uint64_t g_openwebui_edit_model_generation = 0;
 std::chrono::steady_clock::time_point g_last_openwebui_model_at{};
@@ -116,17 +116,17 @@ json generation_info_as_json(const nlohmann::ordered_json& info) {
     return json::parse(info.dump());
 }
 
-void remember_generation_usage(const json& usage) {
+void remember_generation_info(const json& info) {
     std::lock_guard<std::mutex> lock(g_last_generation_info_mutex);
-    g_last_generation_usage = usage;
+    g_last_generation_info = info;
 }
 
-json last_generation_usage_or_default() {
+json last_generation_info_or_default() {
     std::lock_guard<std::mutex> lock(g_last_generation_info_mutex);
-    if (!g_last_generation_usage.empty()) {
-        return g_last_generation_usage;
+    if (!g_last_generation_info.empty()) {
+        return g_last_generation_info;
     }
-    return {{"prompt_tokens", 0}, {"completion_tokens", 0}, {"total_tokens", 0}};
+    return json::object();
 }
 
 json build_image_response_body(const GenParams& params, const WorkerResult& result) {
@@ -134,7 +134,7 @@ json build_image_response_body(const GenParams& params, const WorkerResult& resu
     const auto ordered_info = build_openwebui_generation_info(params, result.timing);
     const std::string info_text = ordered_info.dump();
     const json metadata = generation_info_as_json(ordered_info);
-    remember_generation_usage(metadata);
+    remember_generation_info(metadata);
 
     const json item = {
         {"b64_json", base64_encode(data)},
@@ -955,7 +955,7 @@ json build_automatic1111_response_body(
     const auto data = read_binary_file(result.image_path);
     const auto ordered_info = build_openwebui_generation_info(params, result.timing);
     const json metadata = generation_info_as_json(ordered_info);
-    remember_generation_usage(metadata);
+    remember_generation_info(metadata);
 
     return {
         {"images", json::array({base64_encode(data)})},
@@ -1171,7 +1171,7 @@ http::message_generator handle_request(http::request<http::string_body>&& req) {
         if (req.method() == http::verb::post && target == "/v1/chat/completions") {
             remember_openwebui_model(req.body());
 
-            const json usage = last_generation_usage_or_default();
+            const json generation_info = last_generation_info_or_default();
             const json body = {
                 {"id", "chatcmpl-local"},
                 {"object", "chat.completion"},
@@ -1182,7 +1182,9 @@ http::message_generator handle_request(http::request<http::string_body>&& req) {
                      {{{"index", 0},
                        {"message", {{"role", "assistant"}, {"content", " "}}},
                        {"finish_reason", "stop"}}})},
-                {"usage", usage}};
+                {"usage", generation_info},
+                {"info", generation_info},
+                {"metadata", generation_info}};
             return make_json_response(http::status::ok, req.version(), keep_alive, body);
         }
 
