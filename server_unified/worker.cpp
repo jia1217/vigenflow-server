@@ -1,3 +1,7 @@
+#ifndef BOOST_PROCESS_VERSION
+#define BOOST_PROCESS_VERSION 1
+#endif
+
 #include "worker.hpp"
 #include "file_utils.hpp"
 #include "flux_klein_bf16_export.hpp"
@@ -7,15 +11,7 @@
 #include <atomic>
 #include <algorithm>
 
-#ifdef _WIN32
-#define BOOST_PROCESS_VERSION 1
-#include <boost/process/v1/child.hpp>
-#include <boost/process/v1/args.hpp>
-#include <boost/process/v1/io.hpp>
-#include <boost/process/v1/start_dir.hpp>
-#else
-#include <boost/process.hpp>
-#endif
+#include <boost/process/v1.hpp>
 #include <chrono>
 #include <cctype>
 #include <filesystem>
