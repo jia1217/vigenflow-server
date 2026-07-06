@@ -104,6 +104,8 @@ bool is_local_model_alias(const std::string& model_id) {
     return model_id.empty() ||
            model_id == "local-model" ||
            model_id == "local_model" ||
+           model_id == "local-models" ||
+           model_id == "local_models" ||
            model_id == "local-model-1" ||
            model_id == "local_model_1" ||
            model_id == "local-model-npu" ||

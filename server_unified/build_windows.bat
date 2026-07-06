@@ -50,8 +50,21 @@ set "VCPKG_TRIPLET=%REQUESTED_VCPKG_TRIPLET%"
 set "BOOST_FILESYSTEM_LIB=%REQUESTED_BOOST_FILESYSTEM_LIB%"
 
 if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include" goto have_vcpkg_include
+
+if /I not "%VCPKG_ROOT%"=="C:\dev\vcpkg" if exist "C:\dev\vcpkg\installed\%VCPKG_TRIPLET%\include" (
+    echo VCPKG_ROOT "%VCPKG_ROOT%" has no installed %VCPKG_TRIPLET% packages; using "C:\dev\vcpkg".
+    set "VCPKG_ROOT=C:\dev\vcpkg"
+    goto have_vcpkg_include
+)
+
+if defined USERPROFILE if /I not "%VCPKG_ROOT%"=="%USERPROFILE%\vcpkg" if exist "%USERPROFILE%\vcpkg\installed\%VCPKG_TRIPLET%\include" (
+    echo VCPKG_ROOT "%VCPKG_ROOT%" has no installed %VCPKG_TRIPLET% packages; using "%USERPROFILE%\vcpkg".
+    set "VCPKG_ROOT=%USERPROFILE%\vcpkg"
+    goto have_vcpkg_include
+)
+
 echo VCPKG include path not found: "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include"
-echo Set VCPKG_ROOT or VCPKG_TRIPLET before running this script.
+echo Set VCPKG_ROOT or VCPKG_TRIPLET before running this script, or install packages under C:\dev\vcpkg.
 exit /b 1
 
 :have_vcpkg_include
