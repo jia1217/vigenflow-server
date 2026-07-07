@@ -11,7 +11,10 @@
 #include <atomic>
 #include <algorithm>
 
-#include <boost/process/v1.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/args.hpp>
+#include <boost/process/v1/io.hpp>
+#include <boost/process/v1/start_dir.hpp>
 #include <chrono>
 #include <cctype>
 #include <filesystem>
